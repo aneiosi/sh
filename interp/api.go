@@ -723,21 +723,24 @@ func (r *Runner) Reset() {
 		r.setVarString("HOME", home)
 	}
 	if !r.writeEnv.Get("UID").IsSet() {
-		r.setVar("UID", nil, expand.Variable{
+		r.setVar("UID", expand.Variable{
+			Set:      true,
 			Kind:     expand.String,
 			ReadOnly: true,
 			Str:      strconv.Itoa(os.Getuid()),
 		})
 	}
 	if !r.writeEnv.Get("EUID").IsSet() {
-		r.setVar("EUID", nil, expand.Variable{
+		r.setVar("EUID", expand.Variable{
+			Set:      true,
 			Kind:     expand.String,
 			ReadOnly: true,
 			Str:      strconv.Itoa(os.Geteuid()),
 		})
 	}
 	if !r.writeEnv.Get("GID").IsSet() {
-		r.setVar("GID", nil, expand.Variable{
+		r.setVar("GID", expand.Variable{
+			Set:      true,
 			Kind:     expand.String,
 			ReadOnly: true,
 			Str:      strconv.Itoa(os.Getgid()),
@@ -807,10 +810,7 @@ func (r *Runner) Run(ctx context.Context, node syntax.Node) error {
 		r.setErr(NewExitStatus(uint8(r.exit)))
 	}
 	if r.Vars != nil {
-		r.writeEnv.Each(func(name string, vr expand.Variable) bool {
-			r.Vars[name] = vr
-			return true
-		})
+		maps.Insert(r.Vars, r.writeEnv.Each)
 	}
 	return r.err
 }

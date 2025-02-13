@@ -9,11 +9,13 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"os/user"
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -161,7 +163,7 @@ func (cfg *Config) envSet(name, value string) error {
 	if !ok {
 		return fmt.Errorf("environment is read-only")
 	}
-	return wenv.Set(name, Variable{Kind: String, Str: value})
+	return wenv.Set(name, Variable{Set: true, Kind: String, Str: value})
 }
 
 // Literal expands a single shell word. It is similar to [Fields], but the result
@@ -182,8 +184,8 @@ func Literal(cfg *Config, word *syntax.Word) (string, error) {
 	return cfg.fieldJoin(field), nil
 }
 
-// Document expands a single shell word as if it were within double quotes. It
-// is similar to Literal, but without brace expansion, tilde expansion, and
+// Document expands a single shell word as if it were a here-document body.
+// It is similar to [Literal], but without brace expansion, tilde expansion, and
 // globbing.
 //
 // The config specifies shell expansion options; nil behaves the same as an
@@ -193,7 +195,7 @@ func Document(cfg *Config, word *syntax.Word) (string, error) {
 		return "", nil
 	}
 	cfg = prepareConfig(cfg)
-	field, err := cfg.wordField(word.Parts, quoteDouble)
+	field, err := cfg.wordField(word.Parts, quoteSingle)
 	if err != nil {
 		return "", err
 	}
@@ -725,19 +727,15 @@ func (cfg *Config) quotedElemFields(pe *syntax.ParamExp) []string {
 		case "@": // "${!name[@]}"
 			switch vr := cfg.Env.Get(name); vr.Kind {
 			case Indexed:
-				keys := make([]string, 0, len(vr.Map))
-				// TODO: maps.Keys if it makes it into Go 1.23
+				// TODO: if an indexed array only has elements 0 and 10,
+				// we should not return all indices in between those.
+				keys := make([]string, 0, len(vr.List))
 				for key := range vr.List {
 					keys = append(keys, strconv.Itoa(key))
 				}
 				return keys
 			case Associative:
-				keys := make([]string, 0, len(vr.Map))
-				// TODO: maps.Keys if it makes it into Go 1.23
-				for key := range vr.Map {
-					keys = append(keys, key)
-				}
-				return keys
+				return slices.Collect(maps.Keys(vr.Map))
 			}
 		}
 		return nil
@@ -754,12 +752,7 @@ func (cfg *Config) quotedElemFields(pe *syntax.ParamExp) []string {
 		case Indexed:
 			return vr.List
 		case Associative:
-			// TODO: maps.Values if it makes it into Go 1.23
-			elems := make([]string, 0, len(vr.Map))
-			for _, elem := range vr.Map {
-				elems = append(elems, elem)
-			}
-			return elems
+			return slices.Collect(maps.Values(vr.Map))
 		}
 	case "*": // "${name[*]}"
 		if vr := cfg.Env.Get(name); vr.Kind == Indexed {

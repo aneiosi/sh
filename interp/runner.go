@@ -231,7 +231,7 @@ func (e expandEnv) Get(name string) expand.Variable {
 }
 
 func (e expandEnv) Set(name string, vr expand.Variable) error {
-	e.r.setVarInternal(name, vr)
+	e.r.setVar(name, vr)
 	return nil // TODO: return any errors
 }
 
@@ -374,8 +374,9 @@ func (r *Runner) cmd(ctx context.Context, cm syntax.Command) {
 		fields := r.fields(args...)
 		if len(fields) == 0 {
 			for _, as := range cm.Assigns {
-				vr := r.assignVal(as, "")
-				r.setVar(as.Name.Value, as.Index, vr)
+				prev := r.lookupVar(as.Name.Value)
+				vr := r.assignVal(prev, as, "")
+				r.setVarWithIndex(prev, as.Name.Value, as.Index, vr)
 
 				if !tracingEnabled {
 					continue
@@ -412,15 +413,15 @@ func (r *Runner) cmd(ctx context.Context, cm syntax.Command) {
 
 		for _, as := range cm.Assigns {
 			name := as.Name.Value
-			origVr := r.lookupVar(name)
+			prev := r.lookupVar(name)
 
-			vr := r.assignVal(as, "")
+			vr := r.assignVal(prev, as, "")
 			// Inline command vars are always exported.
 			vr.Exported = true
 
-			restores = append(restores, restoreVar{name, origVr})
+			restores = append(restores, restoreVar{name, prev})
 
-			r.setVarInternal(name, vr)
+			r.setVar(name, vr)
 		}
 
 		trace.call(fields[0], fields[1:]...)
@@ -428,7 +429,7 @@ func (r *Runner) cmd(ctx context.Context, cm syntax.Command) {
 
 		r.call(ctx, cm.Args[0].Pos(), fields)
 		for _, restore := range restores {
-			r.setVarInternal(restore.name, restore.vr)
+			r.setVar(restore.name, restore.vr)
 		}
 	case *syntax.BinaryCmd:
 		switch cm.Op {
@@ -673,9 +674,15 @@ func (r *Runner) cmd(ctx context.Context, cm syntax.Command) {
 					r.exit = 1
 					return
 				}
-				var vr expand.Variable
-				if !as.Naked {
-					vr = r.assignVal(as, valType)
+				vr := r.lookupVar(as.Name.Value)
+				if as.Naked {
+					if valType == "-A" {
+						vr.Kind = expand.Associative
+					} else {
+						vr.Kind = expand.KeepValue
+					}
+				} else {
+					vr = r.assignVal(vr, as, valType)
 				}
 				if global {
 					vr.Local = false
@@ -690,13 +697,7 @@ func (r *Runner) cmd(ctx context.Context, cm syntax.Command) {
 						vr.ReadOnly = true
 					}
 				}
-				if as.Naked {
-					if vr.Exported || vr.Local || vr.ReadOnly {
-						r.setVarInternal(name, vr)
-					}
-				} else {
-					r.setVar(name, as.Index, vr)
-				}
+				r.setVar(name, vr)
 			}
 		}
 	case *syntax.TimeClause:
